@@ -653,7 +653,9 @@ def investigate_anomaly(
         )
 
     target_user_id = assigned_to_user_id or actor.id
-    assignee = db.scalar(select(User).where(User.id == target_user_id).with_for_share())
+    assignee = db.scalar(
+    select(User).where(User.id == target_user_id).with_for_update(read=True)
+)
     if assignee is None:
         raise ResourceNotFoundError(f"Assignee user '{target_user_id}' was not found.")
     if not assignee.is_active:

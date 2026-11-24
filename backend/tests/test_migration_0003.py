@@ -65,6 +65,23 @@ def test_migration_0003_populated_legacy_preservation_and_roundtrip(
 
     # Step 1: Downgrade cleanly to 0002_soft_deactivation and seed legacy populated rows
     command.downgrade(cfg, "0002_soft_deactivation")
+    with session_factory() as s:
+        s.execute(text("""
+            TRUNCATE TABLE
+                meter_calibration_audits,
+                insight_workflow_logs,
+                energy_insights,
+                anomaly_workflow_logs,
+                anomalies,
+                telemetry_readings,
+                meters,
+                zones,
+                facilities,
+                users
+            RESTART IDENTITY CASCADE
+        """))
+        s.commit()
+
     try:
         with session_factory() as s:
             fac_id = "FAC-LEGACY-01"
@@ -321,10 +338,10 @@ def test_stage1_cost_and_dedupe_constraints(db_session: Session) -> None:
         waveform=[200.0],
         baseline_waveform=[140.0],
     )
-    db_session.add(bad_anom)
     with pytest.raises(IntegrityError):
-        db_session.flush()
-    db_session.rollback()
+        with db_session.begin_nested():
+            db_session.add(bad_anom)
+            db_session.flush()
 
     # Valid unavailable_tariff anomaly with NULL cost succeeds; duplicate reading_id rejected
     good_anom = Anomaly(
@@ -374,10 +391,10 @@ def test_stage1_cost_and_dedupe_constraints(db_session: Session) -> None:
         waveform=[200.0],
         baseline_waveform=[140.0],
     )
-    db_session.add(dup_anom)
     with pytest.raises(IntegrityError):
-        db_session.flush()
-    db_session.rollback()
+        with db_session.begin_nested():
+            db_session.add(dup_anom)
+            db_session.flush()
 
     # EnergyInsight consistent cost checks, active dedupe uniqueness, and Implemented allowance
     dedupe = f"PEAK_LOAD_SHIFT:facility={fac.id}:zone={zone.id}:meter={meter.id}"

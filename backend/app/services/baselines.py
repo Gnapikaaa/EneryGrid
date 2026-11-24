@@ -340,8 +340,6 @@ def build_mode_eligibility_clause(
         TelemetryReading.baseline_retry_after <= now_utc,
         earlier_new_history,
     ]
-    if retry_insufficient:
-        wake_conditions.append(TelemetryReading.baseline_last_attempt_at.is_not(None))
 
     return and_(
         TelemetryReading.baseline_computed_at.is_(None),
@@ -578,6 +576,8 @@ def process_meter_baseline_chunk(
                 was_previously_ready=was_ready,
             )
         )
+
+    db.flush()
 
     last_reading = target_readings[-1]
     return MeterBaselineChunkOutcome(

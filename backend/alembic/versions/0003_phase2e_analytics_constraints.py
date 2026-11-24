@@ -110,19 +110,20 @@ def upgrade() -> None:
         existing_type=sa.String(length=24),
         nullable=False,
     )
-    op.drop_constraint(op.f("ck_anomalies_non_negative_cost"), "anomalies", type_="check")
+    op.execute("ALTER TABLE anomalies DROP CONSTRAINT IF EXISTS ck_anomalies_non_negative_cost")
+    op.execute("ALTER TABLE anomalies DROP CONSTRAINT IF EXISTS ck_anomalies_ck_anomalies_non_negative_cost")
     op.create_check_constraint(
-        "ck_anomalies_non_negative_cost",
+        op.f("ck_anomalies_non_negative_cost"),
         "anomalies",
         "estimated_cost IS NULL OR estimated_cost >= 0",
     )
     op.create_check_constraint(
-        "ck_anomalies_valid_cost_status",
+        op.f("ck_anomalies_valid_cost_status"),
         "anomalies",
         "cost_estimate_status IN ('available', 'unavailable_tariff', 'legacy_unverified')",
     )
     op.create_check_constraint(
-        "ck_anomalies_consistent_cost_status",
+        op.f("ck_anomalies_consistent_cost_status"),
         "anomalies",
         "(cost_estimate_status = 'available' AND estimated_cost IS NOT NULL AND estimated_cost >= 0) "
         "OR (cost_estimate_status = 'unavailable_tariff' AND estimated_cost IS NULL) "
@@ -201,7 +202,7 @@ def upgrade() -> None:
     )
 
     # Backfill existing energy_insights rows safely before applying NOT NULL and partial unique index
-    op.execute(
+    op.get_bind().exec_driver_sql(
         """
         WITH derived AS (
             SELECT
@@ -319,15 +320,12 @@ def upgrade() -> None:
 def downgrade() -> None:
     # 1. Revert energy_insights additions and restore pre-0003 NOT NULL constraints
     op.drop_index("uq_insights_active_dedupe", table_name="energy_insights")
-    op.drop_constraint(
-        "ck_energy_insights_consistent_cost_status", "energy_insights", type_="check"
-    )
-    op.drop_constraint(
-        "ck_energy_insights_valid_savings_basis", "energy_insights", type_="check"
-    )
-    op.drop_constraint(
-        "ck_energy_insights_valid_cost_status", "energy_insights", type_="check"
-    )
+    op.execute("ALTER TABLE energy_insights DROP CONSTRAINT IF EXISTS ck_energy_insights_consistent_cost_status")
+    op.execute("ALTER TABLE energy_insights DROP CONSTRAINT IF EXISTS ck_energy_insights_ck_energy_insights_consistent_cost_status")
+    op.execute("ALTER TABLE energy_insights DROP CONSTRAINT IF EXISTS ck_energy_insights_valid_savings_basis")
+    op.execute("ALTER TABLE energy_insights DROP CONSTRAINT IF EXISTS ck_energy_insights_ck_energy_insights_valid_savings_basis")
+    op.execute("ALTER TABLE energy_insights DROP CONSTRAINT IF EXISTS ck_energy_insights_valid_cost_status")
+    op.execute("ALTER TABLE energy_insights DROP CONSTRAINT IF EXISTS ck_energy_insights_ck_energy_insights_valid_cost_status")
     op.drop_constraint(
         "fk_insights_meter_facility_zone", "energy_insights", type_="foreignkey"
     )
@@ -345,11 +343,10 @@ def downgrade() -> None:
         WHERE annual_cost_savings IS NULL
         """
     )
-    op.drop_constraint(
-        op.f("ck_energy_insights_non_negative_annual_cost"), "energy_insights", type_="check"
-    )
+    op.execute("ALTER TABLE energy_insights DROP CONSTRAINT IF EXISTS ck_energy_insights_non_negative_annual_cost")
+    op.execute("ALTER TABLE energy_insights DROP CONSTRAINT IF EXISTS ck_energy_insights_ck_energy_insights_non_negative_annual_cost")
     op.create_check_constraint(
-        "ck_energy_insights_non_negative_annual_cost",
+        op.f("ck_energy_insights_non_negative_annual_cost"),
         "energy_insights",
         "annual_cost_savings >= 0",
     )
@@ -367,11 +364,10 @@ def downgrade() -> None:
         WHERE payback_months IS NULL
         """
     )
-    op.drop_constraint(
-        "ck_energy_insights_non_negative_payback", "energy_insights", type_="check"
-    )
+    op.execute("ALTER TABLE energy_insights DROP CONSTRAINT IF EXISTS ck_energy_insights_non_negative_payback")
+    op.execute("ALTER TABLE energy_insights DROP CONSTRAINT IF EXISTS ck_energy_insights_ck_energy_insights_non_negative_payback")
     op.create_check_constraint(
-        "ck_energy_insights_non_negative_payback",
+        op.f("ck_energy_insights_non_negative_payback"),
         "energy_insights",
         "payback_months >= 0",
     )
@@ -384,8 +380,10 @@ def downgrade() -> None:
 
     # 2. Revert anomalies additions and restore pre-0003 NOT NULL constraints
     op.drop_index("uq_anomalies_reading_id", table_name="anomalies")
-    op.drop_constraint("ck_anomalies_consistent_cost_status", "anomalies", type_="check")
-    op.drop_constraint("ck_anomalies_valid_cost_status", "anomalies", type_="check")
+    op.execute("ALTER TABLE anomalies DROP CONSTRAINT IF EXISTS ck_anomalies_consistent_cost_status")
+    op.execute("ALTER TABLE anomalies DROP CONSTRAINT IF EXISTS ck_anomalies_ck_anomalies_consistent_cost_status")
+    op.execute("ALTER TABLE anomalies DROP CONSTRAINT IF EXISTS ck_anomalies_valid_cost_status")
+    op.execute("ALTER TABLE anomalies DROP CONSTRAINT IF EXISTS ck_anomalies_ck_anomalies_valid_cost_status")
     op.drop_column("anomalies", "cost_estimate_status")
 
     op.execute(
@@ -395,9 +393,10 @@ def downgrade() -> None:
         WHERE estimated_cost IS NULL
         """
     )
-    op.drop_constraint("ck_anomalies_non_negative_cost", "anomalies", type_="check")
+    op.execute("ALTER TABLE anomalies DROP CONSTRAINT IF EXISTS ck_anomalies_non_negative_cost")
+    op.execute("ALTER TABLE anomalies DROP CONSTRAINT IF EXISTS ck_anomalies_ck_anomalies_non_negative_cost")
     op.create_check_constraint(
-        "ck_anomalies_non_negative_cost",
+        op.f("ck_anomalies_non_negative_cost"),
         "anomalies",
         "estimated_cost >= 0",
     )
@@ -410,11 +409,8 @@ def downgrade() -> None:
 
     # 3. Revert telemetry_readings columns & index
     op.drop_index("ix_telemetry_baseline_pending", table_name="telemetry_readings")
-    op.drop_constraint(
-        "ck_telemetry_readings_non_negative_baseline_attempt_count",
-        "telemetry_readings",
-        type_="check",
-    )
+    op.execute("ALTER TABLE telemetry_readings DROP CONSTRAINT IF EXISTS ck_telemetry_readings_non_negative_baseline_attempt_count")
+    op.execute("ALTER TABLE telemetry_readings DROP CONSTRAINT IF EXISTS ck_telemetry_readings_ck_telemetry_readings_non_negative_baseline_attempt_count")
     op.drop_column("telemetry_readings", "baseline_attempt_max_meter_id")
     op.drop_column("telemetry_readings", "baseline_retry_after")
     op.drop_column("telemetry_readings", "baseline_attempt_count")
