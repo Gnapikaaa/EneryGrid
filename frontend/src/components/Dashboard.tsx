@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   AlertOctagon,
@@ -18,6 +18,7 @@ import {
   AnomalyStatus,
   FACILITIES,
   FacilityId,
+  FacilityProfile,
   InsightStatus,
   TimeWindow,
   calculateKpis,
@@ -36,6 +37,8 @@ import { InsightsPanel } from './InsightsPanel';
 import { MeterRegistry } from './MeterRegistry';
 import { SegmentedControl } from './SegmentedControl';
 import { ExportCsvModal } from './ExportCsvModal';
+import { fetchFacilities, ApiFacilityResponse } from '../api/energy';
+import { getStoredAccessToken } from '../api/client';
 
 type NavSection = 'overview' | 'patterns' | 'anomalies' | 'insights' | 'meters';
 
@@ -65,8 +68,56 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
   const [injectedSpikeKw, setInjectedSpikeKw] = useState<number>(0);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
+  // Live facilities from API (null = not yet loaded or failed → fall back to FACILITIES mock)
+  const [apiFacilities, setApiFacilities] = useState<ApiFacilityResponse[] | null>(null);
 
-  const facility = FACILITIES[facilityId];
+  // Fetch real facilities from backend on mount when authenticated
+  useEffect(() => {
+    if (!getStoredAccessToken()) return;
+    let cancelled = false;
+    fetchFacilities(100)
+      .then((resp) => {
+        if (!cancelled && resp.items.length > 0) {
+          setApiFacilities(resp.items);
+        }
+      })
+      .catch(() => {
+        // Backend unavailable — silent fallback to mock data
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const facilitiesMap = useMemo<Record<FacilityId, FacilityProfile>>(() => {
+    if (!apiFacilities || apiFacilities.length === 0) {
+      return FACILITIES;
+    }
+    const merged: Record<string, FacilityProfile> = { ...FACILITIES };
+    for (const apiFac of apiFacilities) {
+      const existing = merged[apiFac.id];
+      if (!existing) continue;
+      const contractedDemandKw = parseFloat(apiFac.contracted_demand_kw);
+      const tariffRateUsd = parseFloat(apiFac.off_peak_tariff_rate);
+      const peakTariffRateUsd = parseFloat(apiFac.peak_tariff_rate);
+      merged[apiFac.id] = {
+        ...existing,
+        name: apiFac.name,
+        code: apiFac.code,
+        location: apiFac.location,
+        contractedDemandKw: Number.isFinite(contractedDemandKw)
+          ? contractedDemandKw
+          : existing.contractedDemandKw,
+        tariffRateUsd: Number.isFinite(tariffRateUsd) ? tariffRateUsd : existing.tariffRateUsd,
+        peakTariffRateUsd: Number.isFinite(peakTariffRateUsd)
+          ? peakTariffRateUsd
+          : existing.peakTariffRateUsd,
+      };
+    }
+    return merged as Record<FacilityId, FacilityProfile>;
+  }, [apiFacilities]);
+
+  const facility = facilitiesMap[facilityId];
 
   const selectedZone = useMemo(
     () => facility.zones.find((z) => z.id === selectedZoneId) ?? null,
@@ -220,7 +271,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
             onChange={(e) => handleFacilityChange(e.target.value as FacilityId)}
             className="w-full px-2.5 py-2 text-xs font-medium bg-slate-50 border border-slate-200 rounded-md text-slate-900 focus:outline-none focus:border-sky-600"
           >
-            {Object.values(FACILITIES).map((fac) => (
+            {Object.values(facilitiesMap).map((fac) => (
               <option key={fac.id} value={fac.id}>
                 {fac.name} ({fac.code})
               </option>
@@ -480,6 +531,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
                 onSelectAnomaly={handleSelectAnomaly}
                 onUpdateStatus={handleUpdateAnomalyStatus}
                 scopeLabel={scopeLabel}
+                facilityId={facilityId}
               />
 
               <InsightsPanel
@@ -487,6 +539,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
                 insightStatuses={insightStatuses}
                 onChangeInsightStatus={handleChangeInsightStatus}
                 selectedZoneName={selectedZone?.name ?? null}
+                facilityId={facilityId}
               />
             </>
           )}
@@ -532,6 +585,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
                 onSelectAnomaly={handleSelectAnomaly}
                 onUpdateStatus={handleUpdateAnomalyStatus}
                 scopeLabel={scopeLabel}
+                facilityId={facilityId}
               />
             </>
           )}
@@ -542,6 +596,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
               insightStatuses={insightStatuses}
               onChangeInsightStatus={handleChangeInsightStatus}
               selectedZoneName={selectedZone?.name ?? null}
+              facilityId={facilityId}
             />
           )}
 
@@ -557,6 +612,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
                 selectedZoneName={selectedZone?.name ?? null}
                 auditedDates={auditedMeterDates}
                 onLogAudit={handleLogMeterAudit}
+                facilityId={facilityId}
               />
             </>
           )}

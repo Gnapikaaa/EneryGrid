@@ -1,12 +1,32 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ActionableInsight, InsightStatus } from '../data/energyData';
 import { SegmentedControl } from './SegmentedControl';
+import { fetchInsights, ApiInsightResponse } from '../api/energy';
+import { getStoredAccessToken } from '../api/client';
+
+/** Map a backend InsightResponse to the frontend ActionableInsight shape. */
+function mapApiInsight(i: ApiInsightResponse): ActionableInsight {
+  return {
+    id: i.id,
+    title: i.title,
+    category: i.category,
+    zone: i.zone_id.slice(0, 8), // UUID short ref until zone names are resolved
+    summary: i.summary,
+    monthlyKwhSavings: parseFloat(i.monthly_kwh_savings),
+    annualUsdSavings: i.annual_cost_savings != null ? parseFloat(i.annual_cost_savings) : 0,
+    paybackMonths: i.payback_months != null ? parseFloat(i.payback_months) : 0,
+    priority: i.priority,
+    status: i.status,
+  };
+}
 
 interface InsightsPanelProps {
   insights: ActionableInsight[];
   insightStatuses: Record<string, InsightStatus>;
   onChangeInsightStatus: (id: string, status: InsightStatus) => void;
   selectedZoneName?: string | null;
+  /** If provided, attempt to fetch live insights from the API for this facility */
+  facilityId?: string;
 }
 
 const INSIGHT_STATUS_OPTIONS = [
@@ -20,11 +40,36 @@ const INSIGHT_STATUS_OPTIONS = [
 ] as const;
 
 export const InsightsPanel: React.FC<InsightsPanelProps> = ({
-  insights,
+  insights: mockInsights,
   insightStatuses,
   onChangeInsightStatus,
   selectedZoneName,
+  facilityId,
 }) => {
+  // Live API data — null means "not yet fetched / fetch failed"
+  const [liveInsights, setLiveInsights] = useState<ActionableInsight[] | null>(null);
+
+  useEffect(() => {
+    setLiveInsights(null);
+    if (!facilityId || !getStoredAccessToken()) return;
+    let cancelled = false;
+    fetchInsights(facilityId, 100)
+      .then((resp) => {
+        if (!cancelled && resp.items.length > 0) {
+          setLiveInsights(resp.items.map(mapApiInsight));
+        }
+      })
+      .catch(() => {
+        // API unavailable — fall through to mock data silently
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [facilityId]);
+
+  // Prefer live data; fall back to mock data passed from parent
+  const insights = liveInsights ?? mockInsights;
+
   const scopedInsights = useMemo(() => {
     if (!selectedZoneName) return insights;
     return insights.filter((item) => item.zone === selectedZoneName);

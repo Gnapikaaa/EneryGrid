@@ -1,25 +1,69 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Search } from 'lucide-react';
 import { MeterAsset } from '../data/energyData';
 import { SegmentedControl } from './SegmentedControl';
 import { StatusIndicator } from './StatusIndicator';
+import { fetchMeters, ApiMeterResponse } from '../api/energy';
+import { getStoredAccessToken } from '../api/client';
+
+/** Map a backend MeterResponse to the frontend MeterAsset shape. */
+function mapApiMeter(m: ApiMeterResponse): MeterAsset {
+  return {
+    id: m.id,
+    meterCode: m.meter_code,
+    equipmentName: m.equipment_name,
+    zone: m.zone_id.slice(0, 8), // UUID short ref; zone name unavailable without extra join
+    ratedKw: parseFloat(m.rated_kw),
+    currentKw: parseFloat(m.current_kw),
+    powerFactor: parseFloat(m.power_factor),
+    thdPct: parseFloat(m.thd_pct),
+    lastCalibrated: m.last_calibrated_at,
+    status: m.status,
+  };
+}
 
 interface MeterRegistryProps {
   meters: MeterAsset[];
   selectedZoneName: string | null;
   auditedDates?: Record<string, string>;
   onLogAudit?: (meterId: string) => void;
+  /** If provided, attempt to fetch live meters from the API for this facility */
+  facilityId?: string;
 }
 
 export const MeterRegistry: React.FC<MeterRegistryProps> = ({
-  meters,
+  meters: mockMeters,
   selectedZoneName,
   auditedDates,
   onLogAudit,
+  facilityId,
 }) => {
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'All' | MeterAsset['status']>('All');
   const [localAuditedIds, setLocalAuditedIds] = useState<Record<string, string>>({});
+  // Live API data — null means "not yet fetched / fetch failed"
+  const [liveMeters, setLiveMeters] = useState<MeterAsset[] | null>(null);
+
+  useEffect(() => {
+    setLiveMeters(null);
+    if (!facilityId || !getStoredAccessToken()) return;
+    let cancelled = false;
+    fetchMeters(facilityId, 100)
+      .then((resp) => {
+        if (!cancelled && resp.items.length > 0) {
+          setLiveMeters(resp.items.map(mapApiMeter));
+        }
+      })
+      .catch(() => {
+        // API unavailable — fall through to mock data silently
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [facilityId]);
+
+  // Prefer live data; fall back to mock data passed from parent
+  const meters = liveMeters ?? mockMeters;
 
   const effectiveAuditedDates = auditedDates ?? localAuditedIds;
 

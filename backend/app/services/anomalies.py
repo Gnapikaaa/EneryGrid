@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal, ROUND_HALF_UP
 import math
 import uuid
@@ -528,7 +528,16 @@ def list_anomalies(
     end_at: datetime | None = None,
 ) -> PaginatedResponse[AnomalyResponse]:
     assert_actor_authorized(actor, ALL_AUTHENTICATED_ROLES)
-    if start_at is not None and end_at is not None and start_at > end_at:
+
+    # Validate and normalise start_at / end_at to UTC (mirrors telemetry.py:804-812)
+    if start_at is not None and (start_at.tzinfo is None or start_at.utcoffset() is None):
+        raise ValidationFailureError("start_at must include an explicit timezone offset or 'Z'.")
+    if end_at is not None and (end_at.tzinfo is None or end_at.utcoffset() is None):
+        raise ValidationFailureError("end_at must include an explicit timezone offset or 'Z'.")
+
+    start_utc = start_at.astimezone(UTC) if start_at is not None else None
+    end_utc = end_at.astimezone(UTC) if end_at is not None else None
+    if start_utc is not None and end_utc is not None and start_utc > end_utc:
         raise ValidationFailureError("start_at cannot be after end_at.")
 
     filters = []
@@ -544,10 +553,10 @@ def list_anomalies(
         filters.append(Anomaly.severity == severity.value)
     if min_z_score is not None:
         filters.append(Anomaly.z_score >= min_z_score)
-    if start_at is not None:
-        filters.append(Anomaly.detected_at >= start_at)
-    if end_at is not None:
-        filters.append(Anomaly.detected_at <= end_at)
+    if start_utc is not None:
+        filters.append(Anomaly.detected_at >= start_utc)
+    if end_utc is not None:
+        filters.append(Anomaly.detected_at <= end_utc)
 
     total = int(db.scalar(select(func.count(Anomaly.id)).where(*filters)) or 0)
     pages = math.ceil(total / page_size) if total > 0 else 0

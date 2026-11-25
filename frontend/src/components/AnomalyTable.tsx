@@ -1,7 +1,43 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AlertOctagon, AlertTriangle, Check, CheckCircle2, Info, Wrench } from 'lucide-react';
 import { AnomalyRecord, AnomalySeverity, AnomalyStatus } from '../data/energyData';
 import { SegmentedControl } from './SegmentedControl';
+import { fetchAnomalies, ApiAnomalyResponse } from '../api/energy';
+import { getStoredAccessToken } from '../api/client';
+
+/** Map a backend AnomalyResponse to the frontend AnomalyRecord shape. */
+function mapApiAnomaly(a: ApiAnomalyResponse): AnomalyRecord {
+  const actualKw = parseFloat(a.actual_kw);
+  const expectedKw = parseFloat(a.expected_kw);
+  const deltaKw = Math.max(0, actualKw - expectedKw);
+  const baselineWaveform = Array.from({ length: 12 }, (_, idx) =>
+    Math.round(expectedKw + Math.sin(idx * 0.6) * expectedKw * 0.03)
+  );
+  const waveform = baselineWaveform.map((base, idx) =>
+    idx >= 3 && idx <= 8 ? Math.round(base + deltaKw * (idx === 5 || idx === 6 ? 1.05 : 0.78)) : base
+  );
+
+  return {
+    id: a.event_code,
+    pointId: a.event_code,
+    timestamp: new Date(a.detected_at).toLocaleString(),
+    meterCode: a.meter_id.slice(0, 8), // UUID short ref until zone name is available
+    zone: a.zone_id.slice(0, 8),       // UUID short ref; a full zones fetch would map this
+    severity: a.severity,
+    zScore: parseFloat(a.z_score),
+    actualKw,
+    expectedKw,
+    deviationPct: Math.round(parseFloat(a.deviation_pct)),
+    durationMin: a.duration_min,
+    estimatedWasteKwh: parseFloat(a.estimated_waste_kwh),
+    estimatedCostUsd: a.estimated_cost != null ? parseFloat(a.estimated_cost) : 0,
+    signature: a.signature,
+    recommendation: a.recommendation,
+    status: a.status,
+    waveform,
+    baselineWaveform,
+  };
+}
 
 interface AnomalyTableProps {
   anomalies: AnomalyRecord[];
@@ -11,19 +47,45 @@ interface AnomalyTableProps {
   onSelectAnomaly: (anomaly: AnomalyRecord | null) => void;
   onUpdateStatus: (anomalyId: string, status: AnomalyStatus) => void;
   scopeLabel?: string;
+  /** If provided, attempt to fetch live anomalies from the API for this facility */
+  facilityId?: string;
 }
 
 export const AnomalyTable: React.FC<AnomalyTableProps> = ({
-  anomalies,
+  anomalies: mockAnomalies,
   sigmaThreshold,
   onSigmaChange,
   selectedAnomalyId,
   onSelectAnomaly,
   onUpdateStatus,
   scopeLabel,
+  facilityId,
 }) => {
   const [severityFilter, setSeverityFilter] = useState<'All' | AnomalySeverity>('All');
   const [statusFilter, setStatusFilter] = useState<'All' | 'Active' | 'Resolved'>('All');
+  // Live API data — null means "not yet fetched / fetch failed"
+  const [liveAnomalies, setLiveAnomalies] = useState<AnomalyRecord[] | null>(null);
+
+  useEffect(() => {
+    setLiveAnomalies(null);
+    if (!facilityId || !getStoredAccessToken()) return;
+    let cancelled = false;
+    fetchAnomalies(facilityId, 100)
+      .then((resp) => {
+        if (!cancelled && resp.items.length > 0) {
+          setLiveAnomalies(resp.items.map(mapApiAnomaly));
+        }
+      })
+      .catch(() => {
+        // API unavailable — fall through to mock data silently
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [facilityId]);
+
+  // Prefer live data; fall back to mock data passed from parent
+  const anomalies = liveAnomalies ?? mockAnomalies;
 
   const filteredAnomalies = useMemo(() => {
     return anomalies.filter((item) => {
