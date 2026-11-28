@@ -1,14 +1,14 @@
 from datetime import datetime
 import uuid
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_meter_updater
 from app.api.v1.errors import raise_http_from_service_error
 from app.core.config import Settings, get_settings
 from app.core.constants import QualityFlag, TelemetrySource
-from app.core.database import get_db
+from app.core.database import get_db, get_session_factory
 from app.models.user import User
 from app.schemas.common import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, PaginatedResponse
 from app.schemas.telemetry import (
@@ -18,6 +18,7 @@ from app.schemas.telemetry import (
     TelemetryReadingResponse,
 )
 from app.services import telemetry as telemetry_service
+from app.services.analytics_scheduler import trigger_analytics_for_meter
 from app.services.exceptions import (
     ConflictError,
     InvalidRelationError,
@@ -47,12 +48,13 @@ _HANDLED_SERVICE_ERRORS = (
 )
 def ingest_single_reading_endpoint(
     payload: TelemetryReadingCreate,
+    background_tasks: BackgroundTasks,
     current_actor: User = Depends(require_meter_updater),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> TelemetryReadingResponse:
     try:
-        return telemetry_service.ingest_reading(
+        result = telemetry_service.ingest_reading(
             db,
             actor=current_actor,
             payload=payload,
@@ -60,6 +62,18 @@ def ingest_single_reading_endpoint(
         )
     except _HANDLED_SERVICE_ERRORS as exc:
         raise_http_from_service_error(exc)
+
+    # Enqueue a bounded background analytics pass for the ingested meter.
+    # We resolve meter_id from the response (guaranteed present after commit).
+    background_tasks.add_task(
+        trigger_analytics_for_meter,
+        result.meter_id,
+        result.facility_id,
+        get_session_factory(),
+        settings,
+        current_actor.id,
+    )
+    return result
 
 
 @router.post(
@@ -70,12 +84,13 @@ def ingest_single_reading_endpoint(
 )
 def ingest_bulk_readings_endpoint(
     payload: TelemetryBulkIngestRequest,
+    background_tasks: BackgroundTasks,
     current_actor: User = Depends(require_meter_updater),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> TelemetryIngestionSummary:
     try:
-        return telemetry_service.ingest_bulk_readings(
+        summary = telemetry_service.ingest_bulk_readings(
             db,
             actor=current_actor,
             payload=payload,
@@ -83,6 +98,31 @@ def ingest_bulk_readings_endpoint(
         )
     except _HANDLED_SERVICE_ERRORS as exc:
         raise_http_from_service_error(exc)
+
+    # After a successful bulk ingest, enqueue one bounded analytics background pass per
+    # unique facility referenced in the payload.  We use facility_id from the raw dicts
+    # (always present after telemetry validation) so we avoid an extra DB round-trip.
+    # trigger_analytics_for_meter is idempotent: a pass over a meter with no pending
+    # readings simply returns quickly with zero work done.
+    if summary.inserted_count > 0:
+        seen_facility_ids: set[str] = set()
+        for raw_item in payload.readings:
+            fid = raw_item.get("facility_id") if isinstance(raw_item, dict) else None
+            if isinstance(fid, str) and fid.strip():
+                seen_facility_ids.add(fid.strip())
+
+        for fac_id in seen_facility_ids:
+            # Schedule a facility-scoped pass (meter_id=None means all meters in facility).
+            # The analytics service already supports meter_id=None for facility-wide passes.
+            background_tasks.add_task(
+                trigger_analytics_for_meter,
+                None,  # facility-wide: no single meter scoped
+                fac_id,
+                get_session_factory(),
+                settings,
+                current_actor.id,
+            )
+    return summary
 
 
 @router.post(

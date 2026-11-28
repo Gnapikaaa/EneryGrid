@@ -9,13 +9,6 @@ import { getStoredAccessToken } from '../api/client';
 function mapApiAnomaly(a: ApiAnomalyResponse): AnomalyRecord {
   const actualKw = parseFloat(a.actual_kw);
   const expectedKw = parseFloat(a.expected_kw);
-  const deltaKw = Math.max(0, actualKw - expectedKw);
-  const baselineWaveform = Array.from({ length: 12 }, (_, idx) =>
-    Math.round(expectedKw + Math.sin(idx * 0.6) * expectedKw * 0.03)
-  );
-  const waveform = baselineWaveform.map((base, idx) =>
-    idx >= 3 && idx <= 8 ? Math.round(base + deltaKw * (idx === 5 || idx === 6 ? 1.05 : 0.78)) : base
-  );
 
   return {
     id: a.event_code,
@@ -34,8 +27,11 @@ function mapApiAnomaly(a: ApiAnomalyResponse): AnomalyRecord {
     signature: a.signature,
     recommendation: a.recommendation,
     status: a.status,
-    waveform,
-    baselineWaveform,
+    // Use real waveform arrays stored by the backend during detection/reconciliation.
+    waveform: Array.isArray(a.waveform) ? a.waveform.map(Number) : [actualKw],
+    baselineWaveform: Array.isArray(a.baseline_waveform)
+      ? a.baseline_waveform.map(Number)
+      : [expectedKw],
   };
 }
 

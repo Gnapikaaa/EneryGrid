@@ -113,6 +113,9 @@ def process_analytics_batch(
 
     meter_stmt = select(Meter.id, Meter.facility_id).join(
         Facility, Meter.facility_id == Facility.id
+    ).where(
+        Meter.is_active.is_(True),
+        Facility.is_active.is_(True),
     )
     if payload.facility_id is not None:
         meter_stmt = meter_stmt.where(Meter.facility_id == payload.facility_id)
@@ -227,7 +230,10 @@ def process_analytics_batch(
                 break
 
         should_evaluate_insights = payload.include_insights and (
-            meter_had_updates or (explicit_narrow_scope and payload.cursor is None)
+            meter_had_updates
+            or payload.force_insights
+            or (explicit_narrow_scope and payload.cursor is None)
+            or (not meter_had_updates and payload.cursor is None)
         )
         if should_evaluate_insights:
             meter = db.get(Meter, meter_id)

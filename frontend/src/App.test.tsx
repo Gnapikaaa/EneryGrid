@@ -179,7 +179,7 @@ describe('EneryGrid dashboard integration', () => {
       expect(anchorClickSpy).toHaveBeenCalledTimes(1);
       expect(
         within(dialog).getByText(
-          /Downloaded enerygrid-plt-fp02-stamping-mtr-604-2026-11-14-to-2026-11-15\.csv \(8 rows\)/
+          /Downloaded energygrid-plt-fp02-stamping-mtr-604-2026-11-14-to-2026-11-15\.csv \(8 rows\)/
         )
       ).toBeInTheDocument();
 

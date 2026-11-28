@@ -73,6 +73,8 @@ export interface ApiAnomalyResponse {
   signature: string;
   recommendation: string;
   assigned_to_user_id: string | null;
+  waveform: number[];
+  baseline_waveform: number[];
 }
 
 export async function fetchAnomalies(

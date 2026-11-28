@@ -628,6 +628,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
         dashboardSigmaThreshold={sigmaThreshold}
         dashboardInjectedSpikeKw={injectedSpikeKw}
         dashboardAnomalyStatuses={anomalyStatuses}
+        facilitiesMap={facilitiesMap}
       />
     </div>
   );

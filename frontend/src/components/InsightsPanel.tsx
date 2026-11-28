@@ -10,7 +10,7 @@ function mapApiInsight(i: ApiInsightResponse): ActionableInsight {
     id: i.id,
     title: i.title,
     category: i.category,
-    zone: i.zone_id.slice(0, 8), // UUID short ref until zone names are resolved
+    zone: '', // zone_id UUID is not a zone name; zone-name filtering is skipped for live data
     summary: i.summary,
     monthlyKwhSavings: parseFloat(i.monthly_kwh_savings),
     annualUsdSavings: i.annual_cost_savings != null ? parseFloat(i.annual_cost_savings) : 0,
@@ -72,7 +72,9 @@ export const InsightsPanel: React.FC<InsightsPanelProps> = ({
 
   const scopedInsights = useMemo(() => {
     if (!selectedZoneName) return insights;
-    return insights.filter((item) => item.zone === selectedZoneName);
+    // If an item has no zone name (live API data before zone-name resolution is added),
+    // include it rather than silently hiding it.
+    return insights.filter((item) => !item.zone || item.zone === selectedZoneName);
   }, [insights, selectedZoneName]);
 
   const totals = scopedInsights.reduce(
