@@ -1,0 +1,1 @@
+"""EnergyGrid FastAPI backend package."""

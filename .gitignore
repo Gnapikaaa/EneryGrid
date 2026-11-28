@@ -1,0 +1,46 @@
+node_modules/
+dist/
+build/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+backend/.env
+backend/.env.*
+
+# Python virtual environments
+backend/.venv/
+backend/venv/
+venv/
+env/
+
+# Python cache
+backend/**/__pycache__/
+**/__pycache__/
+backend/.pytest_cache/
+backend/.mypy_cache/
+*.pyc
+*.pyo
+*.pyd
+
+# AI Studio metadata (not needed in repo)
+.aistudio/
+
+# Archive / ZIP files
+*.zip
+*.tar.gz
+*.tar
+*.rar
+*.7z
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Backend data
+backend/data/
+
+# Misc
+*.log
+
