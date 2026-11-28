@@ -79,6 +79,9 @@ class Settings(BaseSettings):
     analytics_chunk_size: int = Field(default=250, ge=10, le=2000)
     analytics_default_max_readings: int = Field(default=2500, ge=1, le=50000)
     analytics_hard_max_readings: int = Field(default=20000, ge=1, le=100000)
+    # Automatic analytics: background trigger after telemetry ingestion
+    analytics_auto_trigger: bool = True
+    analytics_background_max_readings: int = Field(default=500, ge=10, le=20000)
 
     # Phase 2E: Anomaly detection thresholds (positive deviations only)
     anomaly_z_score_elevated: Decimal = Field(

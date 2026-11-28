@@ -213,6 +213,7 @@ def compute_retry_state_update(
     *,
     is_ready: bool,
     reprocess: bool,
+    retry_insufficient: bool = False,
     retry_exhausted: bool,
     was_previously_ready: bool,
     prior_attempt_count: int,
@@ -238,6 +239,18 @@ def compute_retry_state_update(
         exponent = max(0, attempt_count - 1)
         cooldown_minutes = min(max_cooldown_minutes, base_cooldown_minutes * (2**exponent))
         return now_utc + timedelta(minutes=cooldown_minutes)
+
+    if retry_insufficient:
+        # Keep attempt count strictly below max_attempts so the reading stays eligible
+        # on future incremental passes (no cooldown, no exhaustion).
+        new_count = min(max_attempts - 1, max(1, prior_attempt_count))
+        return RetryStateUpdate(
+            baseline_computed_at=None,
+            baseline_last_attempt_at=now_utc,
+            baseline_attempt_count=new_count,
+            baseline_retry_after=None,  # no cooldown → eligible immediately
+            baseline_attempt_max_meter_id=meter_max_valid_id,
+        )
 
     if reprocess:
         if was_previously_ready:
@@ -322,6 +335,14 @@ def build_mode_eligibility_clause(
         return and_(
             TelemetryReading.baseline_computed_at.is_(None),
             TelemetryReading.baseline_attempt_count >= max_attempts,
+        )
+
+    if retry_insufficient:
+        # Force-retry all readings that have insufficient history but have NOT yet
+        # exhausted max_attempts, bypassing cooldown and new-history triggers.
+        return and_(
+            TelemetryReading.baseline_computed_at.is_(None),
+            TelemetryReading.baseline_attempt_count < max_attempts,
         )
 
     prior = aliased(TelemetryReading)
@@ -544,6 +565,7 @@ def process_meter_baseline_chunk(
         retry_update = compute_retry_state_update(
             is_ready=is_ready,
             reprocess=reprocess,
+            retry_insufficient=retry_insufficient,
             retry_exhausted=retry_exhausted,
             was_previously_ready=was_ready,
             prior_attempt_count=reading.baseline_attempt_count,

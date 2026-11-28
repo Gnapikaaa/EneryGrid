@@ -44,11 +44,12 @@ class AnomalyResponse(BaseModel):
     signature: str
     recommendation: str
     assigned_to_user_id: uuid.UUID | None
+    waveform: list[float]
+    baseline_waveform: list[float]
 
 
 class AnomalyDetailResponse(AnomalyResponse):
-    waveform: list[float]
-    baseline_waveform: list[float]
+    pass
 
 
 class AnomalyWorkflowLogResponse(BaseModel):

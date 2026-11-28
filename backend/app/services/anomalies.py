@@ -16,6 +16,7 @@ from app.core.constants import (
     QualityFlag,
     TariffPeriod,
     TelemetrySource,
+    UserRole,
 )
 from app.models.anomaly import Anomaly, AnomalyWorkflowLog
 from app.models.facility import Facility, Meter
@@ -90,6 +91,8 @@ class ReconciliationPlan:
     new_estimated_waste_kwh: Decimal
     new_estimated_cost: Decimal | None
     new_cost_estimate_status: CostEstimateStatus
+    new_waveform: list[float]
+    new_baseline_waveform: list[float]
     log_from_status: AnomalyStatus | None
     log_to_status: AnomalyStatus | None
     log_note: str | None
@@ -217,6 +220,8 @@ def build_reconciliation_plan(
     fallback_raw_mean_kw: Decimal | None,
     fallback_z_score: Decimal | None,
     applicable_rate: Decimal | None,
+    new_waveform: list[float],
+    new_baseline_waveform: list[float],
 ) -> ReconciliationPlan:
     """Pure reconciliation plan preserving human workflow states and keeping repeat runs idempotent."""
     if metrics is not None:
@@ -229,6 +234,8 @@ def build_reconciliation_plan(
             or existing.estimated_waste_kwh != metrics.estimated_waste_kwh
             or existing.estimated_cost != metrics.estimated_cost
             or existing.cost_estimate_status != metrics.cost_estimate_status
+            or existing.waveform != new_waveform
+            or existing.baseline_waveform != new_baseline_waveform
         )
         return ReconciliationPlan(
             should_update=changed,
@@ -240,6 +247,8 @@ def build_reconciliation_plan(
             new_estimated_waste_kwh=metrics.estimated_waste_kwh,
             new_estimated_cost=metrics.estimated_cost,
             new_cost_estimate_status=metrics.cost_estimate_status,
+            new_waveform=new_waveform,
+            new_baseline_waveform=new_baseline_waveform,
             log_from_status=None,
             log_to_status=None,
             log_note=None,
@@ -269,6 +278,8 @@ def build_reconciliation_plan(
         or existing.estimated_waste_kwh != waste_kwh
         or existing.estimated_cost != est_cost
         or existing.cost_estimate_status != cost_status
+        or existing.waveform != new_waveform
+        or existing.baseline_waveform != new_baseline_waveform
     )
 
     if existing.status == AnomalyStatus.OPEN:
@@ -282,6 +293,8 @@ def build_reconciliation_plan(
             new_estimated_waste_kwh=waste_kwh,
             new_estimated_cost=est_cost,
             new_cost_estimate_status=cost_status,
+            new_waveform=new_waveform,
+            new_baseline_waveform=new_baseline_waveform,
             log_from_status=AnomalyStatus.OPEN,
             log_to_status=AnomalyStatus.RESOLVED,
             log_note="Auto-resolved during baseline recalculation: reading no longer exceeds detection thresholds.",
@@ -298,6 +311,8 @@ def build_reconciliation_plan(
             new_estimated_waste_kwh=waste_kwh,
             new_estimated_cost=est_cost,
             new_cost_estimate_status=cost_status,
+            new_waveform=new_waveform,
+            new_baseline_waveform=new_baseline_waveform,
             log_from_status=existing.status if fields_changed else None,
             log_to_status=existing.status if fields_changed else None,
             log_note=(
@@ -318,6 +333,8 @@ def build_reconciliation_plan(
         new_estimated_waste_kwh=waste_kwh,
         new_estimated_cost=est_cost,
         new_cost_estimate_status=cost_status,
+        new_waveform=new_waveform,
+        new_baseline_waveform=new_baseline_waveform,
         log_from_status=None,
         log_to_status=None,
         log_note=None,
@@ -470,6 +487,18 @@ def reconcile_anomalies_for_chunk(
             waveform=list(existing.waveform),
             baseline_waveform=list(existing.baseline_waveform),
         )
+        # Recompute waveforms using latest baseline so reconciliation stores fresh arrays.
+        recon_expected_kw = (
+            metrics.expected_kw
+            if metrics is not None
+            else (calc.baseline_kw if calc.baseline_kw is not None else reading.actual_kw)
+        )
+        recon_waveform, recon_baseline_waveform = _build_waveforms(
+            waveform_source,
+            reading.recorded_at,
+            reading.actual_kw,
+            recon_expected_kw,
+        )
         plan = build_reconciliation_plan(
             existing=snap,
             metrics=metrics,
@@ -479,6 +508,8 @@ def reconcile_anomalies_for_chunk(
             fallback_raw_mean_kw=calc.raw_mean_kw,
             fallback_z_score=calc.z_score,
             applicable_rate=rate,
+            new_waveform=recon_waveform,
+            new_baseline_waveform=recon_baseline_waveform,
         )
         if not plan.should_update:
             unchanged += 1
@@ -492,6 +523,8 @@ def reconcile_anomalies_for_chunk(
         existing.estimated_waste_kwh = plan.new_estimated_waste_kwh
         existing.estimated_cost = plan.new_estimated_cost
         existing.cost_estimate_status = plan.new_cost_estimate_status.value
+        existing.waveform = plan.new_waveform
+        existing.baseline_waveform = plan.new_baseline_waveform
         if metrics is not None:
             existing.signature = metrics.signature
             existing.recommendation = metrics.recommendation
@@ -669,6 +702,15 @@ def investigate_anomaly(
         raise ResourceNotFoundError(f"Assignee user '{target_user_id}' was not found.")
     if not assignee.is_active:
         raise ConflictError("Cannot assign anomaly to an inactive user account.")
+    try:
+        assignee_role = UserRole(assignee.role)
+    except ValueError as exc:
+        raise ConflictError("Cannot assign anomaly to a user with an invalid role.") from exc
+    if assignee_role not in ANALYTICS_OPERATIONS_ROLES:
+        raise ConflictError(
+            f"Cannot assign anomaly to a user with role '{assignee.role}'. "
+            "Only admins and utility engineers may be assigned anomalies."
+        )
 
     prev_status = anomaly.status
     prev_assignee = anomaly.assigned_to_user_id

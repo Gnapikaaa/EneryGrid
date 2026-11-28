@@ -18,7 +18,7 @@ _BACKEND_DIR = Path(__file__).resolve().parents[1]
 
 def _resolve_test_database_url() -> str:
     env_url = os.getenv("TEST_DATABASE_URL")
-    settings = Settings()  # type: ignore[call-arg]
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]  # avoid ALLOWED_ORIGINS parse error when .env uses CSV format
     resolved_url = env_url or settings.test_database_url
     if not resolved_url:
         raise RuntimeError(

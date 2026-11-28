@@ -5,6 +5,7 @@ import {
   EnergyUnitMode,
   FACILITIES,
   FacilityId,
+  FacilityProfile,
   TELEMETRY_MAX_DATE,
   TELEMETRY_MIN_DATE,
   TimeWindow,
@@ -24,6 +25,8 @@ interface ExportCsvModalProps {
   dashboardSigmaThreshold: number;
   dashboardInjectedSpikeKw: number;
   dashboardAnomalyStatuses: Record<string, AnomalyStatus>;
+  /** Live facilities merged from the API — when provided, the facility selector uses these instead of mock-only data */
+  facilitiesMap?: Record<string, FacilityProfile>;
 }
 
 export const ExportCsvModal: React.FC<ExportCsvModalProps> = ({
@@ -35,6 +38,7 @@ export const ExportCsvModal: React.FC<ExportCsvModalProps> = ({
   dashboardSigmaThreshold,
   dashboardInjectedSpikeKw,
   dashboardAnomalyStatuses,
+  facilitiesMap,
 }) => {
   const [facilityId, setFacilityId] = useState<FacilityId>(dashboardFacilityId);
   const [zoneId, setZoneId] = useState<string>(dashboardZoneId ?? '');
@@ -76,7 +80,9 @@ export const ExportCsvModal: React.FC<ExportCsvModalProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
 
-  const selectedFacility = FACILITIES[facilityId];
+  // Use the merged live+mock facilities map for the selector; fall back to static FACILITIES.
+  const resolvedFacilitiesMap = facilitiesMap ?? FACILITIES;
+  const selectedFacility = resolvedFacilitiesMap[facilityId] ?? FACILITIES[facilityId];
   const selectedZone = useMemo(
     () => selectedFacility.zones.find((z) => z.id === zoneId) ?? null,
     [selectedFacility, zoneId]
@@ -225,7 +231,7 @@ export const ExportCsvModal: React.FC<ExportCsvModalProps> = ({
                 onChange={(e) => handleFacilitySelect(e.target.value as FacilityId)}
                 className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-md text-slate-900 focus:outline-none focus:border-sky-600"
               >
-                {Object.values(FACILITIES).map((fac) => (
+                {Object.values(resolvedFacilitiesMap).map((fac) => (
                   <option key={fac.id} value={fac.id}>
                     {fac.name} ({fac.code})
                   </option>

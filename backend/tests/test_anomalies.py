@@ -34,7 +34,12 @@ from app.services.exceptions import ConflictError, PermissionDeniedError
 
 
 def _unit_settings() -> Settings:
+    # _env_file=None prevents pydantic-settings from loading the project .env
+    # file, which contains ALLOWED_ORIGINS as a comma-separated string that
+    # pydantic-settings cannot JSON-parse.  Explicit field values are still
+    # accepted via kwargs.
     return Settings(
+        _env_file=None,
         environment=Environment.TEST,
         database_url="postgresql+psycopg://postgres:pass@localhost:5432/test",
     )
@@ -191,6 +196,8 @@ def test_anomaly_reprocessing_reconciliation_preserves_human_states_and_is_idemp
         fallback_raw_mean_kw=Decimal("115.00"),
         fallback_z_score=Decimal("1.10"),
         applicable_rate=Decimal("0.2000"),
+        new_waveform=[120.0],
+        new_baseline_waveform=[115.0],
     )
     assert plan_open_drop.new_status == AnomalyStatus.RESOLVED
     assert plan_open_drop.log_from_status == AnomalyStatus.OPEN
@@ -218,6 +225,8 @@ def test_anomaly_reprocessing_reconciliation_preserves_human_states_and_is_idemp
         fallback_raw_mean_kw=Decimal("122.00"),
         fallback_z_score=Decimal("1.60"),
         applicable_rate=Decimal("0.2000"),
+        new_waveform=[130.0],
+        new_baseline_waveform=[100.0],
     )
     assert plan_ack.should_update is True
     assert plan_ack.new_status == AnomalyStatus.ACKNOWLEDGED
@@ -246,6 +255,8 @@ def test_anomaly_reprocessing_reconciliation_preserves_human_states_and_is_idemp
         fallback_raw_mean_kw=Decimal("122.00"),
         fallback_z_score=Decimal("1.60"),
         applicable_rate=Decimal("0.2000"),
+        new_waveform=[130.0],
+        new_baseline_waveform=[100.0],
     )
     assert plan_ack_repeat.should_update is False
     assert plan_ack_repeat.log_to_status is None
@@ -399,3 +410,227 @@ def test_db_anomaly_workflow_transitions_audit_logs_and_permissions(
         (AnomalyStatus.ASSIGNED, AnomalyStatus.RESOLVED),
         (AnomalyStatus.RESOLVED, AnomalyStatus.OPEN),
     ]
+
+
+# ---------------------------------------------------------------------------
+# Regression: waveform propagation through build_reconciliation_plan
+# ---------------------------------------------------------------------------
+
+def test_reconciliation_plan_waveform_propagation() -> None:
+    """new_waveform and new_baseline_waveform must be stored on the returned plan."""
+    snap = ExistingAnomalySnapshot(
+        status=AnomalyStatus.OPEN,
+        severity=AnomalySeverity.HIGH,
+        z_score=Decimal("3.00"),
+        expected_kw=Decimal("100.00"),
+        deviation_pct=Decimal("40.00"),
+        estimated_waste_kwh=Decimal("10.00"),
+        estimated_cost=Decimal("2.00"),
+        cost_estimate_status=CostEstimateStatus.AVAILABLE,
+        waveform=[140.0, 141.0],
+        baseline_waveform=[100.0, 100.0],
+    )
+    new_w = [150.0, 152.0]
+    new_bw = [100.0, 101.0]
+    plan = build_reconciliation_plan(
+        existing=snap,
+        metrics=None,
+        actual_kw=Decimal("140.00"),
+        interval_seconds=900,
+        fallback_baseline_kw=Decimal("95.00"),  # still anomalous → OPEN stays
+        fallback_raw_mean_kw=Decimal("95.00"),
+        fallback_z_score=Decimal("3.20"),
+        applicable_rate=Decimal("0.15"),
+        new_waveform=new_w,
+        new_baseline_waveform=new_bw,
+    )
+    assert plan.new_waveform == new_w
+    assert plan.new_baseline_waveform == new_bw
+
+
+def test_reconciliation_plan_waveform_change_triggers_update() -> None:
+    """When only waveform arrays change, should_update must be True."""
+    snap = ExistingAnomalySnapshot(
+        status=AnomalyStatus.OPEN,
+        severity=AnomalySeverity.HIGH,
+        z_score=Decimal("3.00"),
+        expected_kw=Decimal("100.00"),
+        deviation_pct=Decimal("40.00"),
+        estimated_waste_kwh=Decimal("10.00"),
+        estimated_cost=Decimal("2.00"),
+        cost_estimate_status=CostEstimateStatus.AVAILABLE,
+        waveform=[140.0],
+        baseline_waveform=[100.0],
+    )
+    # Pass same numeric metrics but different waveform
+    plan = build_reconciliation_plan(
+        existing=snap,
+        metrics=None,
+        actual_kw=Decimal("140.00"),
+        interval_seconds=900,
+        fallback_baseline_kw=Decimal("95.00"),
+        fallback_raw_mean_kw=Decimal("95.00"),
+        fallback_z_score=Decimal("3.00"),
+        applicable_rate=None,
+        new_waveform=[140.0, 141.0],      # changed
+        new_baseline_waveform=[100.0],
+    )
+    assert plan.should_update is True
+
+
+def test_reconciliation_plan_identical_waveform_no_update() -> None:
+    """Idempotency: passing identical waveforms and metrics to ACKNOWLEDGED anomaly must not force an update.
+
+    The snapshot must hold the values that build_reconciliation_plan actually computes
+    from the given fallback inputs, otherwise the numeric fields alone cause should_update=True.
+
+    With actual_kw=140, raw_mean=95:
+      deviation_pct = round((140-95)/95 * 100, 2) = 47.37
+      waste_kwh     = round((140-95) * 900 / 3600, 2) = 11.25
+      expected_kw   = fallback_baseline_kw = 95.00
+      z_score       = clamp(3.00) = 3.00
+      cost          = None (applicable_rate=None → UNAVAILABLE_TARIFF)
+    """
+    wf = [140.0, 141.0]
+    bwf = [100.0, 100.5]
+    snap = ExistingAnomalySnapshot(
+        status=AnomalyStatus.ACKNOWLEDGED,
+        severity=AnomalySeverity.HIGH,
+        z_score=Decimal("3.00"),
+        expected_kw=Decimal("95.00"),        # = fallback_baseline_kw
+        deviation_pct=Decimal("47.37"),      # = (140-95)/95*100 rounded to 2dp
+        estimated_waste_kwh=Decimal("11.25"),  # = (140-95)*900/3600 rounded to 2dp
+        estimated_cost=None,
+        cost_estimate_status=CostEstimateStatus.UNAVAILABLE_TARIFF,
+        waveform=wf,
+        baseline_waveform=bwf,
+    )
+    plan = build_reconciliation_plan(
+        existing=snap,
+        metrics=None,
+        actual_kw=Decimal("140.00"),
+        interval_seconds=900,
+        fallback_baseline_kw=Decimal("95.00"),
+        fallback_raw_mean_kw=Decimal("95.00"),
+        fallback_z_score=Decimal("3.00"),
+        applicable_rate=None,
+        new_waveform=list(wf),          # identical copy
+        new_baseline_waveform=list(bwf),
+    )
+    # Nothing changed: no update needed
+    assert plan.should_update is False
+    assert plan.new_status == AnomalyStatus.ACKNOWLEDGED
+
+
+# ---------------------------------------------------------------------------
+# Regression: anomaly assignment role restriction (Defect #7)
+# ---------------------------------------------------------------------------
+
+def test_investigate_anomaly_rejects_facility_manager_assignee(
+    db_session: Session,
+) -> None:
+    """Facility managers must not be assignable as anomaly investigators."""
+    import uuid as _uuid
+    from decimal import Decimal as _Decimal
+
+    from app.models.facility import Facility, Meter, Zone
+    from app.models.anomaly import Anomaly
+    from app.core.constants import (
+        AnomalySeverity,
+        AnomalyStatus,
+        BaselineStatus,
+        CostEstimateStatus,
+        Environment,
+        HealthStatus,
+        QualityFlag,
+        TariffPeriod,
+        TelemetrySource,
+    )
+
+    # Minimal facility/zone/meter
+    fac = Facility(
+        id="role-test",
+        code="TST-RR01",
+        name="Role Test Plant",
+        location="Test",
+        timezone="UTC",
+        is_active=True,
+        health_status=HealthStatus.NOMINAL.value,
+        contracted_demand_kw=_Decimal("100"),
+        currency_code="USD",
+        peak_tariff_rate=_Decimal("0.20"),
+        mid_peak_tariff_rate=_Decimal("0.15"),
+        off_peak_tariff_rate=_Decimal("0.10"),
+    )
+    zone = Zone(
+        facility_id=fac.id,
+        name="Z1",
+        code="Z1",
+        is_active=True,
+        health_status=HealthStatus.NOMINAL.value,
+    )
+    db_session.add_all([fac, zone])
+    db_session.flush()
+    meter = Meter(
+        facility_id=fac.id,
+        zone_id=zone.id,
+        code="MTR-RR01",
+        equipment_name="Role Test Meter",
+        is_active=True,
+        health_status=HealthStatus.NOMINAL.value,
+        manufacturer="X",
+        model="Y",
+        installed_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+    )
+    db_session.add(meter)
+    db_session.flush()
+
+    eng = User(
+        email="eng.rr@energygrid.test",
+        full_name="Engineer RR",
+        password_hash="hash",
+        role=UserRole.UTILITY_ENGINEER.value,
+        is_active=True,
+    )
+    fm_user = User(
+        email="fm.rr@energygrid.test",
+        full_name="Facility Mgr RR",
+        password_hash="hash",
+        role=UserRole.FACILITY_MANAGER.value,
+        is_active=True,
+    )
+    db_session.add_all([eng, fm_user])
+    db_session.flush()
+
+    anomaly = Anomaly(
+        event_code="EVT-RR-001",
+        facility_id=fac.id,
+        zone_id=zone.id,
+        meter_id=meter.id,
+        detected_at=datetime(2026, 11, 20, 10, 0, tzinfo=timezone.utc),
+        severity=AnomalySeverity.HIGH.value,
+        status=AnomalyStatus.ACKNOWLEDGED.value,
+        z_score=_Decimal("3.0"),
+        actual_kw=_Decimal("150.0"),
+        expected_kw=_Decimal("100.0"),
+        deviation_pct=_Decimal("50.0"),
+        duration_min=15,
+        estimated_waste_kwh=_Decimal("3.0"),
+        estimated_cost=None,
+        cost_estimate_status=CostEstimateStatus.UNAVAILABLE_TARIFF.value,
+        signature="sig",
+        recommendation="Check it",
+        waveform=[150.0],
+        baseline_waveform=[100.0],
+    )
+    db_session.add(anomaly)
+    db_session.flush()
+
+    import pytest as _pytest
+    with _pytest.raises(ConflictError, match="role"):
+        anomaly_service.investigate_anomaly(
+            db_session,
+            actor=eng,
+            anomaly_id=anomaly.id,
+            assigned_to_user_id=fm_user.id,
+        )

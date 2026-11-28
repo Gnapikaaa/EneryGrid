@@ -36,6 +36,7 @@ class AnalyticsProcessRequest(BaseModel):
     retry_exhausted: bool = False
     max_readings: int | None = Field(default=None, ge=1)
     include_insights: bool = True
+    force_insights: bool = False
     cursor: AnalyticsCursor | None = None
 
     @field_validator("facility_id")

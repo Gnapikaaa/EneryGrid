@@ -904,7 +904,7 @@ export function exportTelemetryCsv(
   const link = document.createElement('a');
   const scopeSuffix = zoneSlug ? `-${zoneSlug}` : '';
   link.href = url;
-  link.setAttribute('download', `enerygrid-${facility.code.toLowerCase()}${scopeSuffix}-telemetry.csv`);
+  link.setAttribute('download', `energygrid-${facility.code.toLowerCase()}${scopeSuffix}-telemetry.csv`);
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
@@ -1033,7 +1033,7 @@ export function getFilteredConsumptionData(
 
   const zoneSuffix = filters.zoneId ? `-${filters.zoneId}` : '';
   const meterSuffix = filters.meterCode ? `-${filters.meterCode.toLowerCase()}` : '';
-  const filename = `enerygrid-${facility.code.toLowerCase()}${zoneSuffix}${meterSuffix}-${filters.startDate}-to-${filters.endDate}.csv`;
+  const filename = `energygrid-${facility.code.toLowerCase()}${zoneSuffix}${meterSuffix}-${filters.startDate}-to-${filters.endDate}.csv`;
 
   if (!filters.startDate || !filters.endDate || filters.startDate > filters.endDate) {
     return {
