@@ -1,4 +1,4 @@
-"""Background analytics trigger service.
+﻿"""Background analytics trigger service.
 
 Provides a thin fire-and-forget wrapper around the core analytics processing
 service so that telemetry ingestion endpoints can enqueue a bounded analytics
@@ -23,6 +23,9 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from app.core.config import Settings
+from app.models.user import User
+from app.schemas.analytics import AnalyticsProcessRequest
+from app.services.analytics import process_analytics_batch
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -64,17 +67,26 @@ def trigger_analytics_for_meter(
 
     db: "Session | None" = None
     try:
-        from app.schemas.analytics import AnalyticsProcessRequest
-        from app.services.analytics import process_analytics_batch
 
         db = session_factory()
-        request = AnalyticsProcessRequest(
+        actor = db.get(User, actor_id)
+        if actor is None:
+            raise RuntimeError(
+                f"Analytics trigger actor {actor_id} no longer exists."
+            )
+
+        payload = AnalyticsProcessRequest(
             facility_id=facility_id,
             meter_id=meter_id,
             max_readings=settings.analytics_background_max_readings,
             force_insights=False,
         )
-        result = process_analytics_batch(db, request=request, settings=settings)
+        result = process_analytics_batch(
+            db,
+            actor=actor,
+            payload=payload,
+            settings=settings,
+        )
         logger.info(
             "Background analytics pass completed: meter_id=%s facility_id=%s "
             "readings_processed=%s anomalies=%s insights=%s actor_id=%s",
@@ -85,7 +97,7 @@ def trigger_analytics_for_meter(
             result.insights_created,
             actor_id,
         )
-    except Exception:  # noqa: BLE001 — intentional broad catch; this is a background task
+    except Exception:  # noqa: BLE001 â€” intentional broad catch; this is a background task
         logger.exception(
             "Background analytics pass FAILED: meter_id=%s facility_id=%s actor_id=%s",
             meter_id,
@@ -103,3 +115,4 @@ def trigger_analytics_for_meter(
                     meter_id,
                     facility_id,
                 )
+

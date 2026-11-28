@@ -1,11 +1,11 @@
-"""Unit tests for the automatic analytics background trigger.
+﻿"""Unit tests for the automatic analytics background trigger.
 
 No database connection is required. All DB and service calls are mocked.
 
 Covers:
 1. trigger_analytics_for_meter catches exceptions and does not re-raise.
 2. trigger_analytics_for_meter logs failures at ERROR level.
-3. analytics_auto_trigger=False → trigger is a no-op (service not called).
+3. analytics_auto_trigger=False â†’ trigger is a no-op (service not called).
 4. Session factory is called to get a fresh session; request session not reused.
 5. Session is always closed in the finally block, even on exception.
 6. Successful pass logs at INFO level with correct counts.
@@ -29,7 +29,7 @@ from app.core.constants import Environment
 # ---------------------------------------------------------------------------
 
 def _make_settings(*, auto_trigger: bool = True, bg_max: int = 500) -> Settings:
-    return Settings(
+    return Settings(_env_file=None,
         environment=Environment.TEST,
         database_url="postgresql+psycopg://test:test@localhost/test_db",
         test_database_url="postgresql+psycopg://test:test@localhost/test_db2",
@@ -48,7 +48,7 @@ def _make_session_factory(session: Any) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# 3. analytics_auto_trigger=False → no-op
+# 3. analytics_auto_trigger=False â†’ no-op
 # ---------------------------------------------------------------------------
 
 class TestAutoTriggerDisabled:
@@ -260,8 +260,8 @@ class TestSuccessLogging:
 
         captured_request: list[Any] = []
 
-        def _capture(db: Any, *, request: Any, settings: Any) -> Any:
-            captured_request.append(request)
+        def _capture(db: Any, *, actor: Any, payload: Any, settings: Any) -> Any:
+            captured_request.append(payload)
             return mock_summary
 
         with patch(
@@ -278,3 +278,4 @@ class TestSuccessLogging:
 
         assert len(captured_request) == 1
         assert captured_request[0].max_readings == 250
+
